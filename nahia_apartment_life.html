@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>나히아 아파트 라이프</title>
+<style>
+:root{--green:#789b78;--cream:#f6f0df;--ink:#33443b;--mint:#dce9d5}
+*{box-sizing:border-box}body{margin:0;background:#e9e7d9;color:var(--ink);font-family:ui-rounded,"Apple SD Gothic Neo",system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:12px}
+.shell{width:min(100%,1000px);background:#fbf8ed;border:3px solid #667d63;border-radius:18px;overflow:hidden;box-shadow:0 12px 35px #53644a33}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;background:#dce8d2;border-bottom:2px solid #a9bda0}
+h1{font-size:clamp(16px,3vw,23px);margin:0} .sub{font-size:12px;opacity:.8;margin-top:3px}
+.pill{background:#fff9e9;border:1px solid #b3c6a8;border-radius:999px;padding:7px 11px;font-size:12px;white-space:nowrap}
+.stage{position:relative;background:#cbd9bc}
+canvas{display:block;width:100%;height:auto;image-rendering:pixelated;touch-action:none}
+.hud{position:absolute;left:10px;top:10px;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.hud span{background:#fff9e9eF;border:1px solid #c2cdb4;border-radius:8px;padding:5px 8px;font-size:12px;box-shadow:0 2px 0 #657d5b22}
+.bottom{display:flex;justify-content:space-between;gap:12px;padding:12px 15px;align-items:center;flex-wrap:wrap}
+#message{font-size:13px;min-height:20px;flex:1}
+button{font:inherit;cursor:pointer;border:1px solid #6f8969;background:#789b78;color:white;border-radius:10px;padding:9px 13px;box-shadow:0 3px 0 #587254}
+button:active{transform:translateY(2px);box-shadow:0 1px 0 #587254}
+.controls{display:flex;gap:8px;align-items:center}
+.touch{display:none;grid-template-columns:repeat(3,42px);grid-template-rows:repeat(2,38px);gap:4px}
+.touch button{padding:0;font-size:18px;touch-action:none}.touch .blank{visibility:hidden}
+@media(max-width:650px){body{padding:0}.shell{border-radius:0;border-left:0;border-right:0}.pill{font-size:10px;padding:6px 8px}.bottom{padding:9px}.touch{display:grid}.controls button{padding:8px 10px}.sub{font-size:11px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<header><div><h1>🌿 나히아 아파트 라이프</h1><div class="sub">초록 머리 주인공과 보내는 느긋한 하루</div></div><div class="pill" id="clock">오전 09:00 · 여유로운 아침</div></header>
+<div class="stage"><canvas id="game" width="800" height="520" aria-label="아파트 게임 화면"></canvas><div class="hud"><span id="activity">상태: 방 안을 둘러보는 중</span><span>이동: WASD / 방향키</span><span>상호작용: E · 다시 시작: R</span></div></div>
+<div class="bottom"><div id="message">데쿠를 움직여 가구 가까이 가 봐. 가까이 가면 E 키로 행동할 수 있어!</div><div class="controls"><div class="touch" aria-label="모바일 이동 버튼"><button class="blank">·</button><button data-dir="up">↑</button><button class="blank">·</button><button data-dir="left">←</button><button data-dir="down">↓</button><button data-dir="right">→</button></div><button id="actionBtn">E · 상호작용</button><button id="resetBtn">↻ 다시 시작</button></div></div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+const W=800,H=520;
+const player={x:385,y:300,dir:'down',frame:0,action:'idle',actionTime:0};
+let keys={},tick=0,minute=0,near=null,toast='데쿠를 움직여 가구 가까이 가 봐. 가까이 가면 E 키로 행동할 수 있어!';
+const objects=[
+ {id:'bed',name:'침대',x:90,y:78,w:180,h:110,reach:72,verb:'눕기',msg:'폭신한 침대에 누워 잠깐 쉬는 중이야. 체력이 회복되는 기분!',color:'#d4d8bd'},
+ {id:'desk',name:'책상',x:350,y:72,w:145,h:92,reach:66,verb:'공부하기',msg:'노트를 펼치고 오늘의 히어로 공부를 시작했어!',color:'#b88e68'},
+ {id:'poster',name:'올마이트 포스터',x:550,y:35,w:80,h:100,reach:70,verb:'포스터 보기',msg:'“괜찮아! 내가 왔다!” 올마이트 포스터를 보니 힘이 솟아!',color:'#d5b46f'},
+ {id:'kitchen',name:'부엌',x:570,y:165,w:170,h:105,reach:76,verb:'요리하기',msg:'냄비에서 김이 모락모락! 맛있는 카츠동을 만들었어.',color:'#c9b9a0'},
+ {id:'bath',name:'욕실',x:590,y:340,w:155,h:125,reach:82,verb:'목욕하기',msg:'따뜻한 물에 몸을 담그고 피로를 풀었어. 개운하다!',color:'#a9d3d3'},
+ {id:'closet',name:'옷장',x:80,y:270,w:100,h:145,reach:72,verb:'옷 고르기',msg:'히어로 의상을 깔끔하게 정리했어. 내일은 어떤 옷을 입을까?',color:'#b9c6a9'},
+ {id:'sofa',name:'소파',x:310,y:360,w:170,h:82,reach:70,verb:'앉기',msg:'소파에 앉아 잠깐 쉬는 중이야. 평화로운 오후네.',color:'#91ad8a'}
+];
+function rect(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
+function outline(x,y,w,h,c='#5c7056'){ctx.strokeStyle=c;ctx.lineWidth=3;ctx.strokeRect(x,y,w,h)}
+function text(t,x,y,size=12,color='#3e5141',align='left'){ctx.fillStyle=color;ctx.font=`${size}px ui-rounded, system-ui, sans-serif`;ctx.textAlign=align;ctx.fillText(t,x,y)}
+function drawRoom(){
+ rect(0,0,W,H,'#e8e4d2');
+ // wooden floor planks
+ for(let y=0;y<H;y+=32){rect(0,y,W,1,'#d7d0bb');for(let x=(y%64?0:28);x<W;x+=104)rect(x,y,1,32,'#ddd5c0')}
+ // wall and baseboard
+ rect(0,0,W,18,'#d1d9bf');rect(0,18,W,5,'#9eaf91');rect(0,0,12,H,'#9eaf91');rect(W-12,0,12,H,'#9eaf91');
+ // rug
+ rect(270,205,260,130,'#d4dfc9');outline(270,205,260,130,'#b1c4a6');
+ for(let x=282;x<520;x+=18)rect(x,216,2,108,'#c0d0b5');
+ // window
+ rect(295,25,42,68,'#9baf94');rect(300,30,32,58,'#c4e1dd');rect(315,30,2,58,'#9baf94');rect(300,57,32,2,'#9baf94');
+ // plants
+ rect(516,85,20,22,'#bc9270');rect(520,67,12,20,'#71996b');rect(510,74,12,10,'#88ad7a');rect(529,61,12,14,'#668b60');
+}
+function furniture(o){
+ if(o.id==='bed'){
+  rect(o.x,o.y+10,o.w,o.h-10,'#c6b99e');outline(o.x,o.y+10,o.w,o.h-10);rect(o.x+8,o.y+18,o.w-16,o.h-26,'#f0ead9');
+  rect(o.x+15,o.y+20,58,28,'#a8c49e');rect(o.x+82,o.y+20,58,28,'#b9c9db');rect(o.x+8,o.y+51,o.w-16,37,'#d9c7b8');rect(o.x+8,o.y+51,o.w-16,5,'#c6b1a0');
+ } else if(o.id==='desk'){
+  rect(o.x,o.y+23,o.w,o.h-23,'#b88b62');outline(o.x,o.y+23,o.w,o.h-23);rect(o.x+8,o.y+30,48,29,'#f4eddb');rect(o.x+12,o.y+34,40,2,'#a6b79a');rect(o.x+12,o.y+42,30,2,'#a6b79a');rect(o.x+84,o.y+6,44,28,'#778f7b');rect(o.x+88,o.y+10,36,20,'#d8e6d6');rect(o.x+102,o.y+30,7,5,'#65775f');rect(o.x+17,o.y+8,32,15,'#d8c9a5');
+ } else if(o.id==='poster'){
+  rect(o.x,o.y,o.w,o.h,'#8b9a77');outline(o.x,o.y,o.w,o.h);rect(o.x+6,o.y+6,o.w-12,o.h-12,'#f3e8c7');
+  // stylized hero silhouette
+  rect(o.x+24,o.y+18,32,12,'#e4bf54');rect(o.x+19,o.y+29,42,28,'#e2b94b');rect(o.x+12,o.y+34,13,22,'#d1a643');rect(o.x+55,o.y+34,13,22,'#d1a643');rect(o.x+25,o.y+57,12,22,'#527b68');rect(o.x+43,o.y+57,12,22,'#527b68');text('PLUS ULTRA',o.x+40,o.y+91,8,'#8c513a','center');
+ } else if(o.id==='kitchen'){
+  rect(o.x,o.y,o.w,o.h,'#c7b7a0');outline(o.x,o.y,o.w,o.h);rect(o.x+7,o.y+8,72,45,'#e4dfcf');outline(o.x+7,o.y+8,72,45,'#a59b85');rect(o.x+17,o.y+17,52,27,'#8da89a');rect(o.x+90,o.y+8,70,45,'#e8e0cf');outline(o.x+90,o.y+8,70,45,'#a59b85');rect(o.x+99,o.y+17,52,27,'#9eaaa0');rect(o.x+9,o.y+64,150,31,'#ad8e6d');rect(o.x+18,o.y+67,43,23,'#e8dfcc');rect(o.x+90,o.y+67,42,23,'#d2d9c9');
+ } else if(o.id==='bath'){
+  rect(o.x,o.y,o.w,o.h,'#d3e2dc');outline(o.x,o.y,o.w,o.h);for(let xx=o.x+8;xx<o.x+o.w-5;xx+=25)rect(xx,o.y+7,1,o.h-14,'#b2d1cb');for(let yy=o.y+8;yy<o.y+o.h-5;yy+=25)rect(o.x+5,yy,o.w-10,1,'#b2d1cb');
+  rect(o.x+18,o.y+22,118,78,'#f4f0df');outline(o.x+18,o.y+22,118,78,'#9bbdb7');rect(o.x+27,o.y+31,100,60,'#a9d5d6');rect(o.x+36,o.y+40,82,43,'#c9e5e2');rect(o.x+124,o.y+8,15,12,'#9fb9ae');
+ } else if(o.id==='closet'){
+  rect(o.x,o.y,o.w,o.h,'#b4c2a5');outline(o.x,o.y,o.w,o.h);rect(o.x+8,o.y+8,39,o.h-16,'#d7ddc8');rect(o.x+53,o.y+8,39,o.h-16,'#c8d3b9');rect(o.x+42,o.y+8,4, o.h-16,'#9aa98c');rect(o.x+38,o.y+55,3,8,'#778b6d');rect(o.x+58,o.y+55,3,8,'#778b6d');rect(o.x+14,o.y+18,25,35,'#9ebaa4');rect(o.x+60,o.y+18,24,35,'#d9c2a9');
+ } else if(o.id==='sofa'){
+  rect(o.x,o.y+15,o.w,o.h-15,'#91ad8a');outline(o.x,o.y+15,o.w,o.h-15);rect(o.x+8,o.y+8,o.w-16,40,'#a8c3a0');outline(o.x+8,o.y+8,o.w-16,40,'#6f916c');rect(o.x+18,o.y+18,55,28,'#d6dfc9');rect(o.x+94,o.y+18,55,28,'#d6dfc9');rect(o.x+7,o.y+53,12,21,'#7b9874');rect(o.x+o.w-19,o.y+53,12,21,'#7b9874');
+ }
+}
+function drawPlayer(){
+ const x=Math.round(player.x),y=Math.round(player.y);
+ // shadow
+ rect(x-13,y+13,26,5,'#a9a48e');
+ if(player.action==='lying'){
+  rect(x-23,y-4,44,16,'#4f765f');rect(x-18,y-9,18,16,'#6d9c6b');rect(x+7,y-6,12,12,'#e7c9ad');rect(x+5,y-11,16,8,'#4b6648');rect(x+10,y-13,4,4,'#668b55');return;
+ }
+ if(player.action==='sitting'){
+  rect(x-10,y-1,20,15,'#4f765f');rect(x-12,y-13,24,17,'#70966a');rect(x-9,y-23,18,15,'#e9c8a9');rect(x-11,y-29,22,9,'#4b6648');rect(x-12,y-26,5,8,'#52744e');rect(x+7,y-27,5,8,'#52744e');rect(x-8,y-19,3,3,'#35443c');rect(x+5,y-19,3,3,'#35443c');return;
+ }
+ const moving=keys.ArrowUp||keys.ArrowDown||keys.ArrowLeft||keys.ArrowRight||keys.w||keys.a||keys.s||keys.d;
+ const bob=moving?Math.sin(tick*.28)*2:0;
+ // legs
+ rect(x-9,y+1+bob,7,13,'#587c68');rect(x+2,y+1-bob,7,13,'#587c68');rect(x-11,y+11+bob,10,4,'#f1e9d7');rect(x+1,y+11-bob,10,4,'#f1e9d7');
+ // arms and torso
+ rect(x-15,y-16+bob,5,18,'#6f9669');rect(x+10,y-16-bob,5,18,'#6f9669');rect(x-11,y-19,22,24,'#557f64');rect(x-6,y-14,12,10,'#d7e4cf');
+ // head and hair
+ rect(x-10,y-32,20,17,'#edc9a9');rect(x-12,y-36,24,9,'#426342');rect(x-12,y-31,5,9,'#426342');rect(x+7,y-32,5,9,'#426342');
+ rect(x-10,y-39,6,6,'#527e4c');rect(x-3,y-42,7,7,'#456c43');rect(x+4,y-39,7,6,'#5e8b50');rect(x-5,y-28,3,3,'#39453c');rect(x+4,y-28,3,3,'#39453c');
+ // cheek freckles
+ rect(x-4,y-23,2,2,'#a97c68');rect(x+2,y-23,2,2,'#a97c68');
+}
+function draw(){
+ tick++;
+ drawRoom();
+ objects.forEach(furniture);
+ // player depth relative to furniture by approximate y
+ const playerDraw=()=>drawPlayer();
+ if(player.y<270){playerDraw();} 
+ // foreground lower furniture edges are already drawn; redraw player if lower than all
+ if(player.y>=270)playerDraw();
+ // interaction marker
+ if(near && player.action==='idle'){
+   const o=near;rect(o.x+o.w/2-34,o.y+o.h+4,68,22,'#fff8e7');outline(o.x+o.w/2-34,o.y+o.h+4,68,22,'#91a687');text('E  '+o.verb,o.x+o.w/2,o.y+19+o.h,11,'#405943','center');
+ }
+ // tiny decorative wall details
+ rect(205,20,2,2,'#b0bba4');rect(208,20,2,2,'#b0bba4');
+ requestAnimationFrame(draw);
+}
+function findNear(){let best=null,bd=1e9;for(const o of objects){let cx=o.x+o.w/2,cy=o.y+o.h/2;let d=Math.hypot(player.x-cx,player.y-cy);if(d<o.reach&&d<bd){best=o;bd=d}}return best}
+function interact(){
+ if(player.action!=='idle'){player.action='idle';player.actionTime=0;toast='행동을 마치고 다시 움직일 수 있어.';return}
+ near=findNear();
+ if(!near){toast='가구 가까이 다가가면 상호작용할 수 있어.';return}
+ toast=near.msg;player.actionTime=170;
+ if(near.id==='bed'){player.action='lying';player.x=near.x+near.w/2;player.y=near.y+near.h/2+6;}
+ else if(near.id==='sofa'){player.action='sitting';player.x=near.x+near.w/2;player.y=near.y+near.h/2+5;}
+ else if(near.id==='desk'){player.action='sitting';player.x=near.x+near.w/2;player.y=near.y+near.h+23;}
+ else {player.action='busy';}
+ document.getElementById('message').textContent=toast;
+}
+function update(){
+ if(player.action!=='idle'){
+   player.actionTime--;
+   if(player.action==='busy' && tick%18===0){/* gentle cooking/bathing sparkle */ }
+   if(player.actionTime<=0){player.action='idle';player.actionTime=0}
+ } else {
+   let dx=0,dy=0;
+   if(keys.ArrowLeft||keys.a)dx--;if(keys.ArrowRight||keys.d)dx++;
+   if(keys.ArrowUp||keys.w)dy--;if(keys.ArrowDown||keys.s)dy++;
+   if(dx||dy){const n=Math.hypot(dx,dy);player.x+=dx/n*2.5;player.y+=dy/n*2.5;if(Math.abs(dx)>Math.abs(dy))player.dir=dx>0?'right':'left';else player.dir=dy>0?'down':'up'}
+   player.x=Math.max(28,Math.min(W-28,player.x));player.y=Math.max(58,Math.min(H-30,player.y));
+ }
+ near=findNear();
+ document.getElementById('activity').textContent='상태: '+(player.action==='lying'?'침대에서 휴식 중':player.action==='sitting'?'앉아서 쉬는 중':player.action==='busy'?(near?near.verb:'행동 중'):'자유롭게 이동 중');
+ document.getElementById('clock').textContent='오전 '+String(9+Math.floor(tick/3600)%12).padStart(2,'0')+':'+String(Math.floor(tick/60)%60).padStart(2,'0')+' · 느긋한 하루';
+}
+function loopUpdate(){update();setTimeout(loopUpdate,16)}
+window.addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();keys[e.key]=true;keys[k]=true;if(k==='e'||k===' '){if(!e.repeat)interact()}if(k==='r')reset()});
+window.addEventListener('keyup',e=>{keys[e.key]=false;keys[e.key.toLowerCase()]=false});
+document.getElementById('actionBtn').addEventListener('click',interact);
+document.getElementById('resetBtn').addEventListener('click',reset);
+function reset(){player.x=385;player.y=300;player.action='idle';player.actionTime=0;minute=0;toast='처음으로 돌아왔어! 방 안을 자유롭게 둘러봐.';document.getElementById('message').textContent=toast}
+document.querySelectorAll('[data-dir]').forEach(b=>{
+ const dir=b.dataset.dir, map={up:'ArrowUp',down:'ArrowDown',left:'ArrowLeft',right:'ArrowRight'};
+ const on=e=>{e.preventDefault();keys[map[dir]]=true;keys[map[dir].toLowerCase()]=true};
+ const off=e=>{e.preventDefault();keys[map[dir]]=false;keys[map[dir].toLowerCase()]=false};
+ b.addEventListener('pointerdown',on);b.addEventListener('pointerup',off);b.addEventListener('pointerleave',off);b.addEventListener('pointercancel',off);
+});
+draw();loopUpdate();
+})();
+</script>
+</body>
+</html>
